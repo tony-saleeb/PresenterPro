@@ -23,8 +23,10 @@ class SlideCaptureExtension:
         self.screenshot_cache = None
         self.last_screenshot_hash = None  # For duplicate detection
         self.last_screenshot_data = None  # Store last screenshot data
+        self.streaming_task = None  # Background streaming task
+        self.streaming_active = False  # Streaming state
         
-        logger.info("⚡ ZERO-LATENCY Slide Capture Extension with CHANGE DETECTION initialized")
+        logger.info("⚡ LIVE STREAMING Slide Capture Extension initialized")
     
     def enable_capture(self, enabled=True):
         """Enable or disable slide capture"""
@@ -74,11 +76,10 @@ class SlideCaptureExtension:
     
     def force_capture(self):
         """Force a capture even if content appears unchanged (for subtle animations)"""
-        logger.info("🎬 FORCING CAPTURE - Animation might be too subtle for hash detection")
         # Reset hash to force next capture to be considered changed
         self.last_screenshot_hash = None
     
-    async def capture_slide_screenshot(self):
+    async def capture_slide_screenshot(self, force=False):
         """Capture current screen and return as base64 encoded image"""
         if not self.capture_enabled:
             logger.debug("📸 Capture disabled - Slideshow not active")
@@ -101,52 +102,63 @@ class SlideCaptureExtension:
             screenshot.save(buffer, format='JPEG', quality=self.capture_quality, optimize=True)
             buffer.seek(0)
             
-            # Get raw image data for change detection
+            # Get raw image data
             raw_image_data = buffer.getvalue()
             
-            # CRITICAL: Check if slide has actually changed
+            # When forced (live streaming), ALWAYS send - no hash check
+            if force:
+                # Update hash for reference
+                new_hash = self._calculate_image_hash(raw_image_data)
+                self.last_screenshot_hash = new_hash
+                
+                # Encode to base64
+                image_base64 = base64.b64encode(raw_image_data).decode('utf-8')
+                data_url = f"data:image/jpeg;base64,{image_base64}"
+                
+                return data_url
+            
+            # For non-forced captures, check if changed
             if not self._has_slide_changed(raw_image_data):
-                # Same slide detected - don't send duplicate
-                return "UNCHANGED"  # Special flag to indicate no change
+                return "UNCHANGED"
             
             # Encode to base64
             image_base64 = base64.b64encode(raw_image_data).decode('utf-8')
-            
-            # Create data URL
             data_url = f"data:image/jpeg;base64,{image_base64}"
             
-            logger.info(f"⚡ NEW SLIDE captured and ready: {len(data_url)} bytes")
             return data_url
             
         except Exception as e:
             logger.error(f"❌ Screenshot capture failed: {e}")
             return None
     
-    async def create_slide_message(self, slide_number=None):
+    async def create_slide_message(self, slide_number=None, force=False):
         """Create a slide update message with screenshot"""
-        screenshot_data = await self.capture_slide_screenshot()
+        screenshot_data = await self.capture_slide_screenshot(force=force)
         
-        # Handle unchanged slides
-        if screenshot_data == "UNCHANGED":
+        # When forced, screenshot_data should never be UNCHANGED
+        # But handle it just in case
+        if not screenshot_data or screenshot_data == "UNCHANGED":
+            if force:
+                logger.warning("⚠️ Forced capture returned no data - retrying")
+                return None
             logger.info("🚫 SKIPPING BROADCAST - No slide change detected")
-            return None  # Don't create message for unchanged slides
+            return None
         
         message = {
             'type': 'slide_update',
             'timestamp': asyncio.get_event_loop().time(),
             'slide_number': slide_number,
-            'has_image': screenshot_data is not None and screenshot_data != "UNCHANGED"
+            'has_image': True
         }
         
-        if screenshot_data and screenshot_data != "UNCHANGED":
-            message['image_data'] = screenshot_data
-            message['image_format'] = 'jpeg'
-            message['image_scale'] = self.capture_scale
-            message['image_quality'] = self.capture_quality
+        message['image_data'] = screenshot_data
+        message['image_format'] = 'jpeg'
+        message['image_scale'] = self.capture_scale
+        message['image_quality'] = self.capture_quality
         
         return message
     
-    async def broadcast_slide_update(self, websockets_clients, slide_number=None):
+    async def broadcast_slide_update(self, websockets_clients, slide_number=None, force=False):
         """Broadcast slide update to all connected clients"""
         if not websockets_clients:
             logger.debug("📡 No clients connected - Skipping broadcast")
@@ -156,11 +168,11 @@ class SlideCaptureExtension:
             return
         
         try:
-            message = await self.create_slide_message(slide_number)
+            message = await self.create_slide_message(slide_number, force=force)
             
-            # Skip broadcast if no change detected
-            if message is None:
-                logger.info("⏸️  BROADCAST SKIPPED - Slide unchanged, preventing duplicate mirroring")
+            # Skip broadcast if no change detected (unless forced)
+            if message is None and not force:
+                logger.info("⏸️  BROADCAST SKIPPED - Slide unchanged")
                 return
             
             message_json = json.dumps(message)
@@ -178,10 +190,33 @@ class SlideCaptureExtension:
             for client in disconnected_clients:
                 websockets_clients.discard(client)
             
-            logger.info(f"⚡ INSTANT broadcast to {len(websockets_clients)} clients - NEW SLIDE CONFIRMED")
+            logger.info(f"⚡ Broadcast to {len(websockets_clients)} clients (forced={force})")
             
         except Exception as e:
             logger.error(f"❌ Failed to broadcast slide update: {e}")
+    
+    async def start_live_streaming(self, websockets_clients):
+        """Start continuous live streaming of slides"""
+        self.streaming_active = True
+        logger.info("🎥 LIVE STREAMING STARTED - Capturing every 300ms (3.3 fps)")
+        
+        while self.streaming_active and self.capture_enabled:
+            try:
+                # Capture and broadcast with force (always send, no hash check)
+                await self.broadcast_slide_update(websockets_clients, force=True)
+                
+                # Wait 300ms before next capture (3.3 fps - faster updates)
+                await asyncio.sleep(0.3)
+                
+            except Exception as e:
+                logger.error(f"❌ Streaming error: {e}")
+                await asyncio.sleep(1)  # Wait before retry
+        
+        logger.info("🛑 LIVE STREAMING STOPPED")
+    
+    def stop_live_streaming(self):
+        """Stop continuous live streaming"""
+        self.streaming_active = False
 
 # Global instance for easy integration
 slide_capture = SlideCaptureExtension()
@@ -204,21 +239,38 @@ async def on_keystroke(websockets_clients, slide_number):
     await slide_capture.broadcast_slide_update(websockets_clients, slide_number)
 
 async def on_keystroke_force(websockets_clients, slide_number):
-    """Call this after any keystroke to force capture animations (even if hash is same)"""
-    logger.info("⌨️  Keystroke detected - FORCING capture for subtle animations")
-    slide_capture.force_capture()  # Force capture even if hash is same
-    await slide_capture.broadcast_slide_update(websockets_clients, slide_number)
+    """Call this after any keystroke - but with live streaming, this is just a fallback"""
+    # With live streaming active, captures happen automatically every 400ms
+    # This is just a fallback for immediate capture
+    pass  # Live streaming handles everything!
 
 async def on_presentation_start(websockets_clients):
     """Call this when presentation starts"""
-    logger.info("🎬 SLIDESHOW STARTED - Enabling slide capture")
+    logger.info("🎬 SLIDESHOW STARTED - Starting LIVE STREAMING")
     slide_capture.enable_capture(True)
-    await slide_capture.broadcast_slide_update(websockets_clients, 1)
+    
+    # Start continuous live streaming in background
+    slide_capture.streaming_task = asyncio.create_task(
+        slide_capture.start_live_streaming(websockets_clients)
+    )
+    
+    logger.info("🎥 LIVE STREAMING ACTIVE - Phone will show real-time PC screen")
 
 async def on_presentation_end(websockets_clients):
     """Call this when presentation ends"""
-    logger.info("🛑 SLIDESHOW ENDED - Disabling slide capture")
+    logger.info("🛑 SLIDESHOW ENDED - Stopping live streaming")
+    
+    # Stop live streaming
+    slide_capture.stop_live_streaming()
+    if slide_capture.streaming_task:
+        slide_capture.streaming_task.cancel()
+        try:
+            await slide_capture.streaming_task
+        except asyncio.CancelledError:
+            pass
+    
     slide_capture.enable_capture(False)
+    
     # Send end message
     end_message = {
         'type': 'presentation_end',

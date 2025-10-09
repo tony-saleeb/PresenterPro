@@ -1,318 +1,493 @@
+"""
+PresenterPro Server - Beautiful GUI Application
+A modern, premium GUI for the PresenterPro server with QR code generation
+"""
+
+import customtkinter as ctk
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import messagebox
+import qrcode
+from PIL import Image, ImageTk
+import socket
 import threading
 import asyncio
-import json
-import logging
-import socket
-import sys
-import os
-from pathlib import Path
-import subprocess
-import time
-
-# Add the current directory to Python path to import our modules
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from slide_controller_server import SlideControllerServer
+import sys
+from io import BytesIO
 
-class ServerGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Slide Controller Server")
-        self.root.geometry("600x500")
+# Set appearance mode and color theme
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+
+class PresenterProServerGUI:
+    def __init__(self):
+        self.root = ctk.CTk()
+        self.root.title("PresenterPro Server")
+        self.root.geometry("700x1000")
         self.root.resizable(True, True)
+        self.root.minsize(600, 900)
         
-        # Server variables
+        # Server state
         self.server = None
         self.server_thread = None
         self.is_running = False
-        self.server_loop = None
-        self.server_task = None
         self.local_ip = self.get_local_ip()
+        self.server_task = None
         
-        # Configure logging to capture in GUI
-        self.setup_logging()
-        
-        # Create GUI
-        self.create_widgets()
-        
-        # Center window on screen
-        self.center_window()
+        # Setup UI
+        self.setup_ui()
         
     def get_local_ip(self):
-        """Get the local IP address of the machine"""
+        """Get the local IP address"""
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("8.8.8.8", 80))
-                local_ip = s.getsockname()[0]
-                return local_ip
+            # Create a socket to get local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
         except Exception:
-            return "localhost"
+            # Fallback methods
+            try:
+                hostname = socket.gethostname()
+                ip = socket.gethostbyname(hostname)
+                if not ip.startswith("127."):
+                    return ip
+            except Exception:
+                pass
+            
+            # Last resort
+            return "127.0.0.1"
     
-    def setup_logging(self):
-        """Setup logging to capture in GUI"""
-        # Create a custom log handler that writes to our text widget
-        class GUILogHandler(logging.Handler):
-            def __init__(self, text_widget):
-                super().__init__()
-                self.text_widget = text_widget
-                
-            def emit(self, record):
-                msg = self.format(record)
-                # Use after() to ensure thread safety
-                self.text_widget.after(0, lambda: self.append_log(msg))
-                
-            def append_log(self, msg):
-                self.text_widget.insert(tk.END, msg + "\n")
-                self.text_widget.see(tk.END)
+    def setup_ui(self):
+        """Setup the UI components"""
+        # Create scrollable frame
+        self.scrollable_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
+        self.scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # Configure logging
-        logging.basicConfig(level=logging.INFO)
-        logger = logging.getLogger()
+        # Main container with padding
+        main_frame = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True)
         
-        # Remove default handlers
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
+        # ============ DEBUG TEST BUTTON ============
+        test_btn = ctk.CTkButton(
+            main_frame,
+            text="🔧 TEST BUTTON - If you see this, layout is working!",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=40,
+            corner_radius=12,
+            fg_color=("#EF4444", "#DC2626"),
+            hover_color=("#DC2626", "#B91C1C"),
+            command=lambda: messagebox.showinfo("Test", "Layout is working! The start/stop button should be below."),
+        )
+        test_btn.pack(fill="x", pady=(0, 10))
         
-        # Add our GUI handler
-        self.log_handler = GUILogHandler(None)  # Will be set later
-        self.log_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%H:%M:%S'))
-        logger.addHandler(self.log_handler)
-    
-    def create_widgets(self):
-        """Create all GUI widgets"""
-        # Main frame
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # ============ HEADER SECTION ============
+        header_frame = ctk.CTkFrame(main_frame, fg_color=("#1E293B", "#0F172A"), corner_radius=20)
+        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame.pack_propagate(False)
+        header_frame.configure(height=140)
         
-        # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        # Logo and title
+        logo_label = ctk.CTkLabel(
+            header_frame,
+            text="🎬",
+            font=ctk.CTkFont(size=48),
+        )
+        logo_label.pack(pady=(15, 5))
         
-        # Title
-        title_label = ttk.Label(main_frame, text="🎯 Slide Controller Server", 
-                               font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        title_label = ctk.CTkLabel(
+            header_frame,
+            text="PresenterPro Server",
+            font=ctk.CTkFont(size=28, weight="bold"),
+            text_color=("#FFFFFF", "#FFFFFF"),
+        )
+        title_label.pack()
         
-        # Server info frame
-        info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding="10")
-        info_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        info_frame.columnconfigure(1, weight=1)
+        subtitle_label = ctk.CTkLabel(
+            header_frame,
+            text="Professional PowerPoint Control • Zero Latency",
+            font=ctk.CTkFont(size=13),
+            text_color=("#94A3B8", "#94A3B8"),
+        )
+        subtitle_label.pack(pady=(2, 10))
         
-        # IP Address
-        ttk.Label(info_frame, text="IP Address:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.ip_label = ttk.Label(info_frame, text=self.local_ip, font=("Arial", 10, "bold"))
-        self.ip_label.grid(row=0, column=1, sticky=tk.W)
-        
-        # Port
-        ttk.Label(info_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10))
-        self.port_label = ttk.Label(info_frame, text="8080", font=("Arial", 10, "bold"))
-        self.port_label.grid(row=1, column=1, sticky=tk.W)
-        
-        # WebSocket URL
-        ttk.Label(info_frame, text="WebSocket URL:").grid(row=2, column=0, sticky=tk.W, padx=(0, 10))
-        self.url_label = ttk.Label(info_frame, text=f"ws://{self.local_ip}:8080", 
-                                  font=("Arial", 10, "bold"), foreground="blue")
-        self.url_label.grid(row=2, column=1, sticky=tk.W)
-        
-        # Control buttons frame
-        control_frame = ttk.Frame(main_frame)
-        control_frame.grid(row=2, column=0, columnspan=3, pady=(0, 10))
-        
-        # Start/Stop button
-        self.start_button = ttk.Button(control_frame, text="🚀 Start Server", 
-                                      command=self.start_server, style="Accent.TButton")
-        self.start_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.stop_button = ttk.Button(control_frame, text="🛑 Stop Server", 
-                                     command=self.stop_server, state="disabled")
-        self.stop_button.pack(side=tk.LEFT, padx=(0, 10))
+        # ============ STATUS CARD ============
+        status_frame = ctk.CTkFrame(main_frame, fg_color=("#1E293B", "#0F172A"), corner_radius=20)
+        status_frame.pack(fill="x", pady=(0, 20))
         
         # Status indicator
-        self.status_label = ttk.Label(control_frame, text="● Stopped", foreground="red")
-        self.status_label.pack(side=tk.LEFT, padx=(20, 0))
+        status_header = ctk.CTkFrame(status_frame, fg_color="transparent")
+        status_header.pack(fill="x", padx=25, pady=(20, 10))
         
-        # Log frame
-        log_frame = ttk.LabelFrame(main_frame, text="Server Logs", padding="5")
-        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        status_icon_label = ctk.CTkLabel(
+            status_header,
+            text="🔴",
+            font=ctk.CTkFont(size=20),
+        )
+        status_icon_label.pack(side="left")
         
-        # Log text widget
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=15, width=70, 
-                                                 font=("Consolas", 9))
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        status_title = ctk.CTkLabel(
+            status_header,
+            text="Server Status",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#FFFFFF", "#FFFFFF"),
+        )
+        status_title.pack(side="left", padx=(10, 0))
         
-        # Set the log handler's text widget
-        self.log_handler.text_widget = self.log_text
+        self.status_icon = status_icon_label
         
-        # Clear log button
-        clear_button = ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs)
-        clear_button.grid(row=1, column=0, pady=(5, 0), sticky=tk.W)
+        # Status text
+        self.status_label = ctk.CTkLabel(
+            status_frame,
+            text="⚫ Server is stopped",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=("#94A3B8", "#94A3B8"),
+        )
+        self.status_label.pack(padx=25, pady=(0, 20))
         
-        # Instructions frame
-        instructions_frame = ttk.LabelFrame(main_frame, text="Quick Instructions", padding="10")
-        instructions_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        # ============ IP ADDRESS CARD ============
+        ip_frame = ctk.CTkFrame(main_frame, fg_color=("#1E293B", "#0F172A"), corner_radius=20)
+        ip_frame.pack(fill="x", pady=(0, 20))
         
-        instructions_text = """1. 📊 Open PowerPoint presentation
-2. 🖱️ Click on PowerPoint window to make it active  
-3. 📱 Connect your phone using the IP address above
-4. 🎮 Tap 'Start' in the app to begin slideshow (F5)
-5. 👆 Swipe left/right to control slides"""
+        ip_header = ctk.CTkFrame(ip_frame, fg_color="transparent")
+        ip_header.pack(fill="x", padx=25, pady=(20, 10))
         
-        ttk.Label(instructions_frame, text=instructions_text, justify=tk.LEFT).pack(anchor=tk.W)
+        ip_icon = ctk.CTkLabel(
+            ip_header,
+            text="🌐",
+            font=ctk.CTkFont(size=20),
+        )
+        ip_icon.pack(side="left")
         
-        # Initial log message
-        self.log_message("Slide Controller Server GUI Ready")
-        self.log_message(f"Server will run on: {self.local_ip}:8080")
-        self.log_message("Click 'Start Server' to begin")
+        ip_title = ctk.CTkLabel(
+            ip_header,
+            text="Server IP Address",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#FFFFFF", "#FFFFFF"),
+        )
+        ip_title.pack(side="left", padx=(10, 0))
+        
+        # IP address display
+        ip_display_frame = ctk.CTkFrame(ip_frame, fg_color=("#334155", "#1E293B"), corner_radius=12)
+        ip_display_frame.pack(fill="x", padx=25, pady=(0, 15))
+        
+        self.ip_label = ctk.CTkLabel(
+            ip_display_frame,
+            text=self.local_ip,
+            font=ctk.CTkFont(size=32, weight="bold", family="Consolas"),
+            text_color=("#3B82F6", "#3B82F6"),
+        )
+        self.ip_label.pack(pady=20)
+        
+        # Copy button
+        copy_btn = ctk.CTkButton(
+            ip_frame,
+            text="📋 Copy IP Address",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=40,
+            corner_radius=12,
+            fg_color=("#3B82F6", "#2563EB"),
+            hover_color=("#2563EB", "#1D4ED8"),
+            command=self.copy_ip,
+        )
+        copy_btn.pack(padx=25, pady=(0, 20))
+        
+        # ============ QR CODE CARD ============
+        qr_frame = ctk.CTkFrame(main_frame, fg_color=("#1E293B", "#0F172A"), corner_radius=20)
+        qr_frame.pack(fill="x", pady=(0, 20))
+        qr_frame.pack_propagate(False)
+        qr_frame.configure(height=350)
+        
+        qr_header = ctk.CTkFrame(qr_frame, fg_color="transparent")
+        qr_header.pack(fill="x", padx=25, pady=(20, 10))
+        
+        qr_icon = ctk.CTkLabel(
+            qr_header,
+            text="📱",
+            font=ctk.CTkFont(size=20),
+        )
+        qr_icon.pack(side="left")
+        
+        qr_title = ctk.CTkLabel(
+            qr_header,
+            text="Scan to Connect",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#FFFFFF", "#FFFFFF"),
+        )
+        qr_title.pack(side="left", padx=(10, 0))
+        
+        # QR code container with better spacing
+        qr_container = ctk.CTkFrame(qr_frame, fg_color=("#334155", "#1E293B"), corner_radius=15)
+        qr_container.pack(fill="x", padx=25, pady=(10, 10))
+        qr_container.pack_propagate(False)
+        qr_container.configure(height=200)
+        
+        # QR code display with proper sizing
+        self.qr_label = ctk.CTkLabel(
+            qr_container,
+            text="",
+            width=180,
+            height=180,
+        )
+        self.qr_label.pack(expand=True, pady=10)
+        
+        # Generate QR code
+        self.generate_qr_code()
+        
+        qr_instruction = ctk.CTkLabel(
+            qr_frame,
+            text="Open PresenterPro app and scan this QR code",
+            font=ctk.CTkFont(size=13),
+            text_color=("#94A3B8", "#94A3B8"),
+        )
+        qr_instruction.pack(pady=(0, 10))
+        
+        # ============ CONTROL BUTTONS ============
+        button_frame = ctk.CTkFrame(main_frame, fg_color=("#1E293B", "#0F172A"), corner_radius=20)
+        button_frame.pack(fill="x", pady=(0, 20))
+        button_frame.pack_propagate(False)
+        button_frame.configure(height=120)
+        
+        # Button header
+        btn_header = ctk.CTkFrame(button_frame, fg_color="transparent")
+        btn_header.pack(fill="x", padx=25, pady=(15, 5))
+        
+        btn_icon = ctk.CTkLabel(
+            btn_header,
+            text="🎮",
+            font=ctk.CTkFont(size=20),
+        )
+        btn_icon.pack(side="left")
+        
+        btn_title = ctk.CTkLabel(
+            btn_header,
+            text="Server Control",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#FFFFFF", "#FFFFFF"),
+        )
+        btn_title.pack(side="left", padx=(10, 0))
+        
+        # Button container for better spacing
+        btn_container = ctk.CTkFrame(button_frame, fg_color="transparent")
+        btn_container.pack(fill="x", padx=25, pady=(5, 10))
+        
+        self.start_btn = ctk.CTkButton(
+            btn_container,
+            text="▶️  Start Server",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            height=50,
+            corner_radius=16,
+            fg_color=("#10B981", "#059669"),
+            hover_color=("#059669", "#047857"),
+            command=self.toggle_server,
+        )
+        self.start_btn.pack(fill="x")
+        
+        # Additional info label
+        info_label = ctk.CTkLabel(
+            button_frame,
+            text="💡 Tip: Start the server before scanning QR code",
+            font=ctk.CTkFont(size=12),
+            text_color=("#94A3B8", "#94A3B8"),
+        )
+        info_label.pack(pady=(0, 10))
+        
+    def generate_qr_code(self):
+        """Generate QR code for the server IP"""
+        try:
+            # Create QR code with better settings
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,
+                box_size=12,
+                border=4,
+            )
+            qr.add_data(self.local_ip)
+            qr.make(fit=True)
+            
+            # Create QR image with better colors and contrast
+            qr_img = qr.make_image(fill_color="#1E293B", back_color="white")
+            
+            # Resize for display with better quality
+            qr_img = qr_img.resize((180, 180), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage
+            qr_photo = ImageTk.PhotoImage(qr_img)
+            
+            # Update label
+            self.qr_label.configure(image=qr_photo)
+            self.qr_label.image = qr_photo  # Keep a reference
+            
+        except Exception as e:
+            print(f"Error generating QR code: {e}")
+            # Show error message in QR area
+            self.qr_label.configure(text="❌ QR Code Error", font=ctk.CTkFont(size=16))
     
-    def center_window(self):
-        """Center the window on the screen"""
-        self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+    def copy_ip(self):
+        """Copy IP address to clipboard"""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.local_ip)
+        self.root.update()
+        
+        # Show feedback
+        messagebox.showinfo("Copied!", f"IP address {self.local_ip} copied to clipboard!")
     
-    def log_message(self, message):
-        """Add a message to the log"""
-        self.log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
-        self.log_text.see(tk.END)
-    
-    def clear_logs(self):
-        """Clear the log text widget"""
-        self.log_text.delete(1.0, tk.END)
+    def toggle_server(self):
+        """Start or stop the server"""
+        if not self.is_running:
+            self.start_server()
+        else:
+            self.stop_server()
     
     def start_server(self):
-        """Start the server in a separate thread"""
-        if self.is_running:
-            return
-        
+        """Start the WebSocket server"""
         try:
-            self.log_message("🚀 Starting Slide Controller Server...")
+            # Update UI immediately
+            self.is_running = True
+            self.start_btn.configure(
+                text="⏹️  Stop Server",
+                fg_color=("#EF4444", "#DC2626"),
+                hover_color=("#DC2626", "#B91C1C"),
+            )
+            self.status_label.configure(
+                text="🟢 Server is running",
+                text_color=("#10B981", "#10B981"),
+            )
+            self.status_icon.configure(text="🟢")
             
-            # Create server instance
-            self.server = SlideControllerServer()
+            # Disable button temporarily to prevent multiple starts
+            self.start_btn.configure(state="disabled")
             
             # Start server in a separate thread
             self.server_thread = threading.Thread(target=self.run_server, daemon=True)
             self.server_thread.start()
             
-            # Update UI
-            self.is_running = True
-            self.start_button.config(state="disabled")
-            self.stop_button.config(state="normal")
-            self.status_label.config(text="● Running", foreground="green")
+            # Re-enable button after a short delay
+            self.root.after(1000, lambda: self.start_btn.configure(state="normal"))
             
-            self.log_message("Server started successfully!")
-            self.log_message(f"Connect your phone to: {self.local_ip}:8080")
-            
-        except Exception as e:
-            self.log_message(f"Error starting server: {e}")
-            messagebox.showerror("Error", f"Failed to start server:\n{e}")
-    
-    def run_server(self):
-        """Run the server (called in separate thread)"""
-        try:
-            # Create new event loop for this thread
-            self.server_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.server_loop)
-            
-            # Create a task for the server
-            self.server_task = self.server_loop.create_task(self.server.start_server())
-            
-            # Run the server
-            self.server_loop.run_until_complete(self.server_task)
+            # Show success message
+            self.root.after(500, lambda: messagebox.showinfo(
+                "Server Started", 
+                f"✅ Server is now running on {self.local_ip}:8080\n\n📱 Scan the QR code with your phone to connect!\n\n🎯 Ready for presentations!"
+            ))
             
         except Exception as e:
-            self.log_message(f"Server error: {e}")
-        finally:
-            # Clean up the event loop
-            if self.server_loop:
-                try:
-                    # Cancel any remaining tasks
-                    if self.server_task and not self.server_task.done():
-                        self.server_task.cancel()
-                    
-                    # Close the loop
-                    self.server_loop.close()
-                except:
-                    pass
-                self.server_loop = None
-                self.server_task = None
-            
-            # Update UI when server stops
-            self.root.after(0, self.server_stopped)
+            messagebox.showerror("Error", f"Failed to start server: {e}")
+            self.is_running = False
+            self.start_btn.configure(state="normal")
     
     def stop_server(self):
-        """Stop the server"""
-        if not self.is_running:
-            return
-        
+        """Stop the WebSocket server"""
         try:
-            self.log_message("Stopping server...")
-            
-            # Stop the server by canceling the task
-            if self.server_loop and not self.server_loop.is_closed():
-                if self.server_task and not self.server_task.done():
-                    # Cancel the server task
-                    self.server_loop.call_soon_threadsafe(self.server_task.cancel)
-                # Stop the event loop
-                self.server_loop.call_soon_threadsafe(self.server_loop.stop)
-            
-            # Update UI immediately
             self.is_running = False
-            self.start_button.config(state="normal")
-            self.stop_button.config(state="disabled")
-            self.status_label.config(text="● Stopped", foreground="red")
             
-            self.log_message("Server stopped")
+            # Disable button temporarily
+            self.start_btn.configure(state="disabled")
+            
+            # Update UI
+            self.start_btn.configure(
+                text="▶️  Start Server",
+                fg_color=("#10B981", "#059669"),
+                hover_color=("#059669", "#047857"),
+            )
+            self.status_label.configure(
+                text="⚫ Server is stopped",
+                text_color=("#94A3B8", "#94A3B8"),
+            )
+            self.status_icon.configure(text="🔴")
+            
+            # Stop the server if it exists
+            if self.server:
+                try:
+                    # Try to stop the server gracefully
+                    if hasattr(self.server, 'stop'):
+                        self.server.stop()
+                except Exception as e:
+                    print(f"Error stopping server: {e}")
+            
+            # Re-enable button
+            self.start_btn.configure(state="normal")
+            
+            # Show confirmation
+            messagebox.showinfo("Server Stopped", "✅ Server has been stopped successfully.\n\n📱 Disconnected clients will need to reconnect.")
             
         except Exception as e:
-            self.log_message(f"Error stopping server: {e}")
+            messagebox.showerror("Error", f"Failed to stop server: {e}")
+            self.start_btn.configure(state="normal")
     
-    def server_stopped(self):
-        """Called when server stops (from server thread)"""
+    def run_server(self):
+        """Run the WebSocket server"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Create and run server
+            self.server = SlideControllerServer()
+            
+            # Run server until stopped
+            while self.is_running:
+                try:
+                    loop.run_until_complete(self.server.start_server())
+                    break
+                except Exception as e:
+                    if self.is_running:
+                        print(f"Server error: {e}")
+                        # Wait a bit before retrying
+                        import time
+                        time.sleep(1)
+                    else:
+                        break
+            
+        except Exception as e:
+            print(f"Server error: {e}")
+            self.is_running = False
+            # Update UI on error
+            self.root.after(0, self.reset_ui_on_error)
+    
+    def reset_ui_on_error(self):
+        """Reset UI when server encounters an error"""
         self.is_running = False
-        self.start_button.config(state="normal")
-        self.stop_button.config(state="disabled")
-        self.status_label.config(text="● Stopped", foreground="red")
-        self.log_message("Server stopped")
+        self.start_btn.configure(
+            text="▶️  Start Server",
+            fg_color=("#10B981", "#059669"),
+            hover_color=("#059669", "#047857"),
+            state="normal"
+        )
+        self.status_label.configure(
+            text="❌ Server error - Click to restart",
+            text_color=("#EF4444", "#EF4444"),
+        )
+        self.status_icon.configure(text="🔴")
+        messagebox.showerror("Server Error", "Server encountered an error and stopped.\n\nClick 'Start Server' to try again.")
+    
+    def run(self):
+        """Run the application"""
+        self.root.mainloop()
     
     def on_closing(self):
         """Handle window closing"""
         if self.is_running:
-            if messagebox.askokcancel("Quit", "Server is running. Do you want to quit?"):
+            if messagebox.askokcancel("Quit", "Server is still running. Do you want to stop it and quit?"):
                 self.stop_server()
-                self.root.destroy()
+                self.root.after(1000, self.root.destroy)  # Give time for server to stop
         else:
             self.root.destroy()
 
+
 def main():
-    """Main function"""
-    root = tk.Tk()
-    
-    # Set window icon (if available)
+    """Main entry point"""
     try:
-        # You can add an icon file here if you have one
-        # root.iconbitmap("icon.ico")
-        pass
-    except:
-        pass
-    
-    # Create and run the GUI
-    app = ServerGUI(root)
-    
-    # Handle window closing
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    
-    # Start the GUI
-    root.mainloop()
+        app = PresenterProServerGUI()
+        app.root.protocol("WM_DELETE_WINDOW", app.on_closing)
+        app.run()
+    except Exception as e:
+        print(f"Error: {e}")
+        messagebox.showerror("Error", f"Failed to start application: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

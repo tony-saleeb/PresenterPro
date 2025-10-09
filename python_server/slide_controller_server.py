@@ -81,8 +81,8 @@ class SlideController:
         # Disable pyautogui's fail-safe feature for presentations
         pyautogui.FAILSAFE = False
         
-        # ZERO LATENCY: Minimal pause for maximum speed
-        pyautogui.PAUSE = 0.01
+        # ZERO LATENCY: Absolute zero pause for maximum speed
+        pyautogui.PAUSE = 0.0
         
         # Initialize laser pointer
         self.laser_pointer = LaserPointer()
@@ -119,107 +119,42 @@ class SlideController:
     
     async def next_slide(self):
         """Move to the next slide using keyboard shortcut"""
-        logger.info("🎯 NEXT SLIDE command received")
         try:
-            # FOCUS VERIFICATION: Ensure PowerPoint is focused
-            if not self._is_powerpoint_focused():
-                logger.warning("⚠️  PowerPoint may not be focused - Keystroke might not work")
-            
-            # Try multiple methods for next slide
-            logger.info("📡 Sending Right Arrow key...")
+            # Send keystroke immediately - NO DELAYS
             pyautogui.press('right')
-            logger.info("✅ Right Arrow key sent successfully")
             
             # SLIDESHOW-ONLY MIRRORING: Only capture during active presentation
             if self.presentation_mode:
-                # ANIMATION-AWARE: Always capture after any keystroke to catch animations
-                logger.info(f"⚡ SLIDESHOW ACTIVE - Capturing slide/animation change")
-                
-                # SIMPLE ANIMATION FIX: Single immediate capture with force
-                logger.info("⏱️  Starting immediate animation capture")
-                
-                # Capture immediately after keystroke - FORCE capture
-                await asyncio.sleep(0.05)  # Very short wait (50ms)
-                await on_keystroke_force(self.connected_clients, self.current_slide)
-                logger.info("📸 IMMEDIATE capture after keystroke (forced)")
-                
-                logger.info("🚀 Immediate animation capture completed")
-            else:
-                logger.info("ℹ️  Not in slideshow mode - No mirroring needed")
-            
-            # Alternative method - uncomment if right arrow doesn't work
-            # pyautogui.press('space')  # Space bar
-            # pyautogui.press('pagedown')  # Page Down
+                # Schedule capture in background - DON'T WAIT FOR IT
+                asyncio.create_task(on_keystroke_force(self.connected_clients, self.current_slide))
             
         except Exception as e:
             logger.error(f"❌ Error sending next slide command: {e}")
         
     async def previous_slide(self):
         """Move to the previous slide using keyboard shortcut"""
-        logger.info("🎯 PREVIOUS SLIDE command received")
         try:
-            # FOCUS VERIFICATION: Ensure PowerPoint is focused
-            if not self._is_powerpoint_focused():
-                logger.warning("⚠️  PowerPoint may not be focused - Keystroke might not work")
-            
-            # Try multiple methods for previous slide
-            logger.info("📡 Sending Left Arrow key...")
+            # Send keystroke immediately - NO DELAYS
             pyautogui.press('left')
-            logger.info("✅ Left Arrow key sent successfully")
             
             # SLIDESHOW-ONLY MIRRORING: Only capture during active presentation
             if self.presentation_mode:
-                # ANIMATION-AWARE: Always capture after any keystroke to catch animations
-                logger.info(f"⚡ SLIDESHOW ACTIVE - Capturing slide/animation change")
-                
-                # SIMPLE ANIMATION FIX: Single immediate capture with force
-                logger.info("⏱️  Starting immediate animation capture")
-                
-                # Capture immediately after keystroke - FORCE capture
-                await asyncio.sleep(0.05)  # Very short wait (50ms)
-                await on_keystroke_force(self.connected_clients, self.current_slide)
-                logger.info("📸 IMMEDIATE capture after keystroke (forced)")
-                
-                logger.info("🚀 Immediate animation capture completed")
-            else:
-                logger.info("ℹ️  Not in slideshow mode - No mirroring needed")
-            
-            # Alternative method - uncomment if left arrow doesn't work
-            # pyautogui.press('backspace')  # Backspace
-            # pyautogui.press('pageup')  # Page Up
+                # Schedule capture in background - DON'T WAIT FOR IT
+                asyncio.create_task(on_keystroke_force(self.connected_clients, self.current_slide))
             
         except Exception as e:
             logger.error(f"❌ Error sending previous slide command: {e}")
     
     async def handle_keystroke(self, key):
         """Handle any keystroke that might trigger animations or slide changes"""
-        logger.info(f"⌨️  KEYSTROKE command received: {key}")
         try:
-            # FOCUS VERIFICATION: Ensure PowerPoint is focused
-            if not self._is_powerpoint_focused():
-                logger.warning("⚠️  PowerPoint may not be focused - Keystroke might not work")
-            
-            # Send the keystroke
-            logger.info(f"📡 Sending {key} key...")
+            # Send keystroke immediately - NO DELAYS
             pyautogui.press(key)
-            logger.info(f"✅ {key} key sent successfully")
             
             # SLIDESHOW-ONLY MIRRORING: Only capture during active presentation
             if self.presentation_mode:
-                # ANIMATION-AWARE: Always capture after any keystroke to catch animations
-                logger.info(f"⚡ SLIDESHOW ACTIVE - Capturing slide/animation change after {key}")
-                
-                # SIMPLE ANIMATION FIX: Single immediate capture with force
-                logger.info("⏱️  Starting immediate animation capture")
-                
-                # Capture immediately after keystroke - FORCE capture
-                await asyncio.sleep(0.05)  # Very short wait (50ms)
-                await on_keystroke_force(self.connected_clients, self.current_slide)
-                logger.info("📸 IMMEDIATE capture after keystroke (forced)")
-                
-                logger.info("🚀 Immediate animation capture completed")
-            else:
-                logger.info("ℹ️  Not in slideshow mode - No mirroring needed")
+                # Schedule capture in background - DON'T WAIT FOR IT
+                asyncio.create_task(on_keystroke_force(self.connected_clients, self.current_slide))
             
         except Exception as e:
             logger.error(f"❌ Error sending {key} command: {e}")
@@ -493,15 +428,45 @@ class SlideControllerServer:
         self.controller.connected_clients = self.connected_clients
         
     def get_local_ip(self):
-        """Get the local IP address of the machine"""
+        """Get the local IP address of the machine - Works WITHOUT internet"""
         try:
-            # Connect to a remote address to determine local IP
+            # Method 1: Try to get local IP using socket trick
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("8.8.8.8", 80))
+                # Try connecting to a local broadcast address first (no internet needed)
+                s.connect(("10.255.255.255", 1))
                 local_ip = s.getsockname()[0]
                 return local_ip
         except Exception:
-            return "localhost"
+            try:
+                # Method 2: Get hostname and resolve it (works on local network)
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                # Verify it's a valid private IP
+                if local_ip.startswith(('192.168.', '10.', '172.')):
+                    return local_ip
+            except Exception:
+                pass
+            
+            try:
+                # Method 3: Enumerate all network interfaces (most reliable)
+                import netifaces
+                for interface in netifaces.interfaces():
+                    addrs = netifaces.ifaddresses(interface)
+                    if netifaces.AF_INET in addrs:
+                        for addr in addrs[netifaces.AF_INET]:
+                            ip = addr['addr']
+                            # Return first valid private IP
+                            if ip.startswith(('192.168.', '10.', '172.')) and ip != '127.0.0.1':
+                                logger.info(f"Found local IP using netifaces: {ip}")
+                                return ip
+            except ImportError:
+                logger.warning("netifaces not installed, using fallback method")
+            except Exception as e:
+                logger.warning(f"Error using netifaces: {e}")
+            
+            # Fallback: Return 0.0.0.0 (listen on all interfaces)
+            logger.warning("Could not determine local IP, using 0.0.0.0")
+            return "0.0.0.0"
     
     async def handle_client(self, websocket, path):
         """Handle WebSocket connections from mobile clients"""
@@ -539,23 +504,36 @@ class SlideControllerServer:
                     elif 'command' in data:
                         command = data['command']
                         params = data.get('params', {})
-                        logger.info(f"🎯 Processing command: {command} with params: {params}")
+                        
                         # Skip heartbeat commands completely
                         if not data.get('heartbeat', False):
-                            response = await self.controller.handle_command(command, params)
-                            response['timestamp'] = data.get('timestamp')
-                            logger.info(f"🎯 Command response: {response}")
-                            await websocket.send(json.dumps(response))
-                            
-                            # Broadcast status to all connected clients
-                            if response['status'] == 'success':
-                                status_update = {
-                                    'type': 'status_update',
-                                    'presentation_mode': self.controller.presentation_mode,
-                                    'current_slide': self.controller.current_slide,
-                                    'last_command': data['command']
+                            # For slide navigation commands, execute immediately without waiting
+                            if command in ['next_slide', 'previous_slide']:
+                                # Execute in background - NO WAITING
+                                asyncio.create_task(self.controller.handle_command(command, params))
+                                
+                                # Send immediate success response
+                                response = {
+                                    'status': 'success',
+                                    'message': f'{command} executed',
+                                    'timestamp': data.get('timestamp')
                                 }
-                                await self.broadcast_to_clients(status_update, exclude=websocket)
+                                await websocket.send(json.dumps(response))
+                            else:
+                                # For other commands, wait for response
+                                response = await self.controller.handle_command(command, params)
+                                response['timestamp'] = data.get('timestamp')
+                                await websocket.send(json.dumps(response))
+                                
+                                # Broadcast status to all connected clients
+                                if response['status'] == 'success':
+                                    status_update = {
+                                        'type': 'status_update',
+                                        'presentation_mode': self.controller.presentation_mode,
+                                        'current_slide': self.controller.current_slide,
+                                        'last_command': data['command']
+                                    }
+                                    await self.broadcast_to_clients(status_update, exclude=websocket)
                     
                 except json.JSONDecodeError:
                     error_response = {'status': 'error', 'message': 'Invalid JSON format'}
@@ -609,10 +587,20 @@ class SlideControllerServer:
         local_ip = self.get_local_ip()
         
         logger.info("=" * 60)
-        logger.info("SLIDE CONTROLLER SERVER STARTING")
+        logger.info("PRESENTERPRO SERVER STARTING")
         logger.info("=" * 60)
         logger.info(f"Server running on: {local_ip}:{self.port}")
         logger.info(f"WebSocket URL: ws://{local_ip}:{self.port}")
+        logger.info("=" * 60)
+        logger.info("CONNECTION OPTIONS (NO INTERNET REQUIRED):")
+        logger.info("✅ Option 1: Same WiFi Network")
+        logger.info("   - Connect both PC and phone to same WiFi")
+        logger.info("   - Use IP address shown above")
+        logger.info("✅ Option 2: Phone Hotspot (Recommended)")
+        logger.info("   - Create hotspot on your phone (no internet needed)")
+        logger.info("   - Connect PC to your phone's hotspot")
+        logger.info("   - Use IP address shown above")
+        logger.info("   - Works perfectly without internet!")
         logger.info("=" * 60)
         logger.info("POWERPOINT SETUP INSTRUCTIONS:")
         logger.info("1. Open PowerPoint presentation")

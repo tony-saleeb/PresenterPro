@@ -167,10 +167,8 @@ class SlideControllerBloc extends Bloc<SlideControllerEvent, SlideControllerStat
     NextSlide event,
     Emitter<SlideControllerState> emit,
   ) async {
-    await _onSendSlideCommand(
-      const SendSlideCommand(SlideCommand.next),
-      emit,
-    );
+    // Fire-and-forget - don't wait for response
+    _service.sendCommand(SlideCommand.next);
     emit(state.copyWith(currentSlide: state.currentSlide + 1));
   }
 
@@ -179,10 +177,8 @@ class SlideControllerBloc extends Bloc<SlideControllerEvent, SlideControllerStat
     Emitter<SlideControllerState> emit,
   ) async {
     if (state.currentSlide > 0) {
-      await _onSendSlideCommand(
-        const SendSlideCommand(SlideCommand.previous),
-        emit,
-      );
+      // Fire-and-forget - don't wait for response
+      _service.sendCommand(SlideCommand.previous);
       emit(state.copyWith(currentSlide: state.currentSlide - 1));
     }
   }
